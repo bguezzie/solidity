@@ -2245,6 +2245,22 @@ void TypeChecker::typeCheckFunctionGeneralChecks(
 		}
 	}
 
+	if (_functionType->kind() == FunctionType::Kind::BytesConcat)
+	{
+		solAssert(paramArgMap.empty(), "");
+		for (auto const& argument: arguments)
+			if (
+				Type const* argumentType = type(*argument);
+				!dynamic_cast<FixedBytesType const*>(argumentType) &&
+				!argumentType->isImplicitlyConvertibleTo(*TypeProvider::bytesMemory())
+			)
+				m_errorReporter.typeError(
+					8015_error,
+					argument->location(),
+					"bytes.concat argument can only be of type bytes memory or fixed bytes."
+				);
+	}
+
 	TypePointers const& returnParameterTypes = _functionType->returnParameterTypes();
 	bool isLibraryCall = (_functionType->kind() == FunctionType::Kind::DelegateCall);
 	bool callRequiresABIEncoding =
