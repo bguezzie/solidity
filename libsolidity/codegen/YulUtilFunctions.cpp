@@ -2351,6 +2351,59 @@ string YulUtilFunctions::copyArrayFromStorageToMemoryFunction(ArrayType const& _
 	});
 }
 
+string YulUtilFunctions::bytesArrayConcatFunction(TypePointers _argumentTypes)
+{
+	string functionName = "bytes_concat";
+	for (TypePointer argumentType: _argumentTypes)
+	{
+		solUnimplementedAssert(argumentType->category() == Type::Category::Array, "");
+		auto const* argumentArrayType = dynamic_cast<ArrayType const*>(argumentType);
+		solUnimplementedAssert(argumentArrayType->dataStoredIn(DataLocation::Memory), "");
+		solUnimplementedAssert(argumentArrayType->sizeOnStack() == 1, "");
+		solAssert(argumentArrayType->isByteArray(), "");
+		functionName += "_" + argumentType->identifier();
+	}
+
+	return m_functionCollector.createFunction(functionName, [&]() {
+		Whiskers templ(R"(
+			function <functionName>(<arguments>) -> outPtr {
+				outPtr := <allocateUnbounded>()
+				let dataStart := add(outPtr, 0x20)
+				let dstMemPtr := dataStart
+				<#argument>
+				{
+					let length := <arrayLength>(<paramSrcPtr>)
+					let srcMemPtr := add(<paramSrcPtr>, 0x20)
+					for {let i := 0} lt(i, length) { i := add(i, 0x20) } {
+						let bytesUsed := sub(length, i)
+						if gt(bytesUsed, 0x20) { bytesUsed := 0x20 }
+						mstore(dstMemPtr, mload(srcMemPtr))
+						dstMemPtr := add(dstMemPtr, bytesUsed)
+						srcMemPtr := add(srcMemPtr, 0x20)
+					}
+				}
+				</argument>
+				mstore(outPtr, sub(dstMemPtr, dataStart))
+				<finalizeAllocation>(outPtr, sub(dstMemPtr, outPtr))
+			}
+		)");
+		templ("functionName", functionName);
+		string paramPrefix = "param_";
+		templ("arguments", suffixedVariableNameList(paramPrefix, 0, _argumentTypes.size()));
+		templ("allocateUnbounded", allocateUnboundedFunction());
+		templ("finalizeAllocation", finalizeAllocationFunction());
+		vector<map<string, string>> argumentParams(_argumentTypes.size());
+		for (size_t i = 0; i < _argumentTypes.size(); ++i)
+		{
+			auto const& argumentArrayType = dynamic_cast<ArrayType const&>(*_argumentTypes[i]);
+			argumentParams[i]["arrayLength"] = arrayLengthFunction(argumentArrayType);
+			argumentParams[i]["paramSrcPtr"] = paramPrefix + to_string(i);
+		}
+		templ("argument", argumentParams);
+		return templ.render();
+	});
+}
+
 string YulUtilFunctions::mappingIndexAccessFunction(MappingType const& _mappingType, Type const& _keyType)
 {
 	solAssert(_keyType.sizeOnStack() <= 1, "");
